@@ -86,7 +86,7 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
     build_indices(@db_path)
   end
 
-  # Take a User-Agent string and an IP address and return a hash with detected values
+  # Take a User-Agent string and an IP address and return a robot description, or nil.
   private
   def detect(ua, ip)
     # Look for robots with the same IP addressor CIDR
