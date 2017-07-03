@@ -25,8 +25,8 @@ require 'digest'
 # bad           danger, there is good reasons to watch or block this entity
 #
 # This filter requires the Access Watch `robots.json` file to run.
-# TBD: Instructions to download it.
 #
+
 class LogStash::Filters::Accesswatch < LogStash::Filters::Base
 
   config_name "accesswatch"
@@ -43,33 +43,6 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
   # The field containing the User-Agent string.
   config :ua_source, :validate => :string, :required => true
 
-  private
-  def build_indices(filename)
-    file = File.read(filename)
-    data = JSON.parse(file)
-    # transform the CIDRs into Ruby ranges
-    data['robots'].each {|robot|
-      robot['cidrs'] = robot['cidrs'].collect {|cidr| cidr2range(cidr)}
-    }
-    # build indices
-    @ip2robots = group_by_multi(data['robots'], 'ips')
-    @cidr2robots = group_by_multi(data['robots'], 'cidrs')
-    @ip2cidrs = IntervalTree::Tree.new(@cidr2robots.keys)
-    @ua2robots = group_by_multi(data['robots'], 'uas')
-    # compile and sort robot regexps
-    data['regexps'].each { |regexp|
-      regexp['pattern'] = Regexp.new(regexp['value'], Regexp::IGNORECASE)
-    }
-    @regexps = data['regexps'].sort {|a, b|
-      a['priority'] <=> b['priority']
-    }
-  end
-
-  public
-  def register
-    build_indices(@db_path)
-  end
-
   # Transform a CIDR described as a 2-array [start size]
   # into a Ruby 3-dotted range.
   private
@@ -83,36 +56,47 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
   private
   def group_by_multi(coll, key)
     res = Hash.new {|hash, key| hash[key] = Array.new}
-    coll.each {|el| el[key].each {|val| res[val].push(el)}}
+    coll.each {|el|
+      if !el[key].nil?
+        el[key].each {|val|
+          res[val].push(el)
+        }
+      end
+    }
     return res
+  end
+
+  private
+  def build_indices(filename)
+    file = File.read(filename)
+    robots = JSON.parse(file)
+    robots.each {|robot|
+      if !robot['cidrs'].nil?
+        robot['cidrs'] = robot['cidrs'].collect {|cidr| cidr2range(cidr)}
+      end
+    }
+    @ip2robots = group_by_multi(robots, 'ips')
+    @cidr2robots = group_by_multi(robots, 'cidrs')
+    @ip2cidrs = IntervalTree::Tree.new(@cidr2robots.keys)
+    @ua2robots = group_by_multi(robots, 'uas')
+  end
+
+  public
+  def register
+    build_indices(@db_path)
   end
 
   # Take a User-Agent string and an IP address and return a hash with detected values
   private
   def detect(ua, ip)
-    # Is it a robot based on the User-Agent?
-    is_robot = false
-    if ua.nil?
-      # It is a robot if there is no User-Agent string
-      is_robot = true
-    else
-      # Match against the regexps of known robots
-      matches = @regexps.select { |regexp|
-        regexp['pattern'].match(ua)
-      }
-      is_robot = !matches.empty?
-    end
-    # Look for robots with the same IP address
+    # Look for robots with the same IP addressor CIDR
     ip_candidates = []
+    cidr_candidates = []
     if ip
       i = ip.ipv4? ? ip.ipv4_mapped.to_i : ip.to_i # convert IP to arbitrary length integer
       ip_candidates = @ip2robots[i]
-    end
-    # Look for robots on the same network if the UA already gave a clue it was a robot
-    cidr_candidates = []
-    if ip and is_robot
       cidrs = @ip2cidrs.search(i)
-      cidr_candidates = cidrs.collect {|cidr| @cidr2robots[cidr]}.reduce([], :concat)
+      cidr_candidates = cidrs.collect {|cidr| @cidr2robots[cidr]}.reduce([], :concat) unless cidrs.nil?
     end
     # Look for robots with the same User-Agent
     ua_candidates = []
@@ -121,11 +105,7 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
     end
     # Make a final decision
     robots = ((ip_candidates | cidr_candidates) & ua_candidates)
-    if robots.empty?
-      if is_robot
-        {'identity' => {'type' => 'robot'}}
-      end
-    else
+    if !robots.empty?
       robot = robots[0]
       url = "https://access.watch/database/robots/#{robot['reputation']}/#{robot['urlid'] or robot['id']}"
       {'identity'   => {'type' => 'robot'},
@@ -140,11 +120,11 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
   def filter(event)
     ip_s = event.get(@ip_source)
     ip = IPAddr.new ip_s unless ip_s.nil?
-    data = detect(event.get(@ua_source), ip)
-    if data
-      event.set('identity',   data['identity'])   unless data['identity'].nil?
-      event.set('robot',      data['robot'])      unless data['robot'].nil?
-      event.set('reputation', data['reputation']) unless data['reputation'].nil?
+    robot = detect(event.get(@ua_source), ip)
+    if robot
+      event.set('identity',   robot['identity'])   unless robot['identity'].nil?
+      event.set('robot',      robot['robot'])      unless robot['robot'].nil?
+      event.set('reputation', robot['reputation']) unless robot['reputation'].nil?
     end
     filter_matched(event)
   end
