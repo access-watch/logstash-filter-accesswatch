@@ -1,7 +1,7 @@
 # encoding: utf-8
 require "logstash/filters/base"
 require "logstash/namespace"
-require 'net/http'
+require 'logstash/plugin_mixins/http_client'
 require 'json'
 require 'digest'
 require 'lru_redux'
@@ -11,6 +11,8 @@ require 'lru_redux'
 
 class LogStash::Filters::Accesswatch < LogStash::Filters::Base
 
+  include LogStash::PluginMixins::HttpClient
+
   config_name "accesswatch"
 
   # Your API Key
@@ -18,9 +20,6 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
 
   # The size of the local cache, 0 to deactivate
   config :cache_size, :validate => :number, :default => 10000
-
-  # The read timeout for the HTTP request to the service
-  config :read_timeout, :validate => :number, :default => 1
 
   # The field containing the IP address.
   config :ip_source, :validate => :string, :required => true
@@ -45,69 +44,75 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
 
   public
   def register
-    @http_client = Net::HTTP.start('api.access.watch', 80, :read_timeout => @read_timeout)
     if @cache_size > 0
       @cache = LruRedux::ThreadSafeCache.new(@cache_size)
     end
   end
 
-  def fetch_data(aw_request)
-    begin
-      http_request = aw_request[:http_request]
-      http_request['Api-Key'] = @api_key
-      http_request['Accept'] = 'application/json'
-      http_request['User Agent'] = "Access Watch Logstash Filter Plugin/0.1"
-      http_response = @http_client.request http_request
-      if http_response.code != '200'
-        {:status      => :error,
-         :http_status => http_response.code,
-         :message     => 'AccessWatch: Could not fetch data for this object.'}
-      else
-        {:status => :success,
-         :data   => JSON.parse(http_response.body)}
-      end
-    rescue Net::ReadTimeout
-      {:status => :timeout}
+  def handle_response(response)
+    data = JSON.parse(response.body)
+    if response.code == 200
+      {:status => :success,
+       :data   => data}
+    else
+      {:status  => :error,
+       :code    => data["code"],
+       :message => data["message"]}
     end
   end
 
-  def cached_fetch_data(aw_request)
+  def url(path)
+    "http://api.access.watch#{path}"
+  end
+
+  def get_json(path)
+    response = self.client.get(self.url(path),
+                               headers: {"Api-Key"    => @api_key,
+                                         "Accept"     => "application/json",
+                                         "User-Agent" => "Access Watch Logstash Plugin/0.2.0"})
+    self.handle_response(response)
+  end
+
+  def post_json(path, data)
+    response = self.client.post(self.url(path),
+                                headers: {"Api-Key"      => @api_key,
+                                          "Accept"       => "application/json",
+                                          "Content-Type" => "application/json",
+                                          "User-Agent"   => "Access Watch Logstash Plugin/0.2.0"},
+                                body: JSON.generate(data))
+    self.handle_response(response)
+  end
+
+  def with_cache(id, &block)
     if @cache
-      @cache.getset(aw_request[:id]){
-        self.fetch_data(aw_request)
-      }
+      @cache.getset(id) { block.call }
     else
-      self.fetch_data(aw_request)
+      block.call
     end
   end
 
   def fetch_address(ip)
-    self.cached_fetch_data({:id           => "ip-#{ip}",
-                            :http_request => Net::HTTP::Get.new("/1.1/address/#{ip}")})
+    self.with_cache("ip-#{ip}") {
+      self.get_json("/1.1/address/#{ip}")
+    }
   end
 
   def fetch_user_agent(user_agent)
-    http_request = Net::HTTP::Post.new('/1.1/user-agent')
-    http_request.body = JSON.generate({:value => user_agent})
-    http_request.content_type = 'application/json'
-    id = "ua-#{Digest::MD5.hexdigest(user_agent)}"
-    self.cached_fetch_data({:id           => id,
-                            :http_request => http_request})
+    self.with_cache("ua-#{Digest::MD5.hexdigest(user_agent)}") {
+      self.post_json("/1.1/user-agent", {:value => user_agent})
+    }
   end
 
   def fetch_identity(ip, user_agent)
     ip = ip || ''
     user_agent = user_agent || ''
-    http_request = Net::HTTP::Post.new('/1.1/identity')
-    http_request.body = JSON.generate({:address => ip,
-                                       :user_agent => user_agent})
-    http_request.content_type = 'application/json'
-    id = "identity-#{Digest::MD5.hexdigest(ip)}-#{Digest::MD5.hexdigest(user_agent)}"
-    self.cached_fetch_data({:id           => id,
-                            :http_request => http_request})
+    self.with_cache("identity-#{Digest::MD5.hexdigest(ip)}-#{Digest::MD5.hexdigest(user_agent)}") {
+      self.post_json("/1.1/identity", {:address => ip, :user_agent => user_agent})
+    }
   end
 
   def augment(event, destination, data, keys=nil)
+    p "Setting event.#{destination} to #{data}, keys:#{keys}"
     if destination && data
       event.set(destination,
                 data.select {|k, v|
@@ -122,15 +127,21 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
     user_agent = event.get(@user_agent_source)
     if @ip_source and @user_agent_source
       data = self.fetch_identity(ip, user_agent)
-      self.augment(event, @address_destination, data[:address], @@address_keys)
-      self.augment(event, @robot_destination, data[:robot], @@robot_keys)
-      self.augment(event, @reputation_destination, data[:reputation])
+      if data[:status] == :success
+        self.augment(event, @address_destination, data[:address], @@address_keys)
+        self.augment(event, @robot_destination, data[:robot], @@robot_keys)
+        self.augment(event, @reputation_destination, data[:reputation])
+      end
     elsif @ip_source
       data = self.fetch_address(ip)
-      self.augment(event, @address_destination, data, @@address_keys)
+      if data[:status] == :success
+        self.augment(event, @address_destination, data, @@address_keys)
+      end
     else
       data = self.fetch_user_agent(user_agent)
-      self.augment(event, @user_agent_destination, data)
+      if data[:status] == :success
+        self.augment(event, @user_agent_destination, data)
+      end
     end
     filter_matched(event)
   end

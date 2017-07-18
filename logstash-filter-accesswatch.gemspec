@@ -18,8 +18,9 @@ Gem::Specification.new do |s|
                  'logstash_group' => 'filter' }
 
   # Gem dependencies
-  s.add_runtime_dependency 'logstash-core-plugin-api', '~>   2.0'
-  s.add_runtime_dependency 'lru_redux', '~> 1.1'
+  s.add_runtime_dependency 'logstash-core-plugin-api',   '~> 2.0'
+  s.add_runtime_dependency 'logstash-mixin-http_client', '~> 5.2'
+  s.add_runtime_dependency 'lru_redux',                  '~> 1.1'
 
   s.add_development_dependency 'logstash-devutils', '1.3.3'
 end
