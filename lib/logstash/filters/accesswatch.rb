@@ -55,6 +55,7 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
       {:status => :success,
        :data   => data}
     else
+      @logger.error("Access Watch (#{data["code"]}): #{data["message"]}")
       {:status  => :error,
        :code    => data["code"],
        :message => data["message"]}
