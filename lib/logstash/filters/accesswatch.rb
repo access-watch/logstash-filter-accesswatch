@@ -1,10 +1,10 @@
 # encoding: utf-8
 require "logstash/filters/base"
 require "logstash/namespace"
-require 'logstash/plugin_mixins/http_client'
-require 'json'
-require 'digest'
-require 'lru_redux'
+require "logstash/plugin_mixins/http_client"
+require "json"
+require "digest"
+require "lru_redux"
 
 # The Access Watch filter adds information about robots visiting
 # your website based on data from our robots database.
@@ -39,8 +39,8 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
   # The destination field for reputation data
   config :reputation_destination, :validate => :string
 
-  @@address_keys = ['value', 'hostname', 'country_code', 'flags']
-  @@robot_keys = ['id', 'name', 'url']
+  @@address_keys = ["value", "hostname", "country_code", "flags"]
+  @@robot_keys = ["id", "name", "url"]
 
   public
   def register
@@ -104,15 +104,14 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
   end
 
   def fetch_identity(ip, user_agent)
-    ip = ip || ''
-    user_agent = user_agent || ''
+    ip = ip || ""
+    user_agent = user_agent || ""
     self.with_cache("identity-#{Digest::MD5.hexdigest(ip)}-#{Digest::MD5.hexdigest(user_agent)}") {
       self.post_json("/1.1/identity", {:address => ip, :user_agent => user_agent})
     }
   end
 
   def augment(event, destination, data, keys=nil)
-    p "Setting event.#{destination} to #{data}, keys:#{keys}"
     if destination && data
       event.set(destination,
                 data.select {|k, v|
@@ -126,21 +125,22 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
     ip = event.get(@ip_source)
     user_agent = event.get(@user_agent_source)
     if @ip_source and @user_agent_source
-      data = self.fetch_identity(ip, user_agent)
-      if data[:status] == :success
-        self.augment(event, @address_destination, data[:address], @@address_keys)
-        self.augment(event, @robot_destination, data[:robot], @@robot_keys)
-        self.augment(event, @reputation_destination, data[:reputation])
+      response = self.fetch_identity(ip, user_agent)
+      if response[:status] == :success
+        data = response[:data]
+        self.augment(event, @address_destination, data["address"], @@address_keys)
+        self.augment(event, @robot_destination, data["robot"], @@robot_keys)
+        self.augment(event, @reputation_destination, data["reputation"])
       end
     elsif @ip_source
-      data = self.fetch_address(ip)
-      if data[:status] == :success
-        self.augment(event, @address_destination, data, @@address_keys)
+      response = self.fetch_address(ip)
+      if response[:status] == :success
+        self.augment(event, @address_destination, response[:data], @@address_keys)
       end
     else
-      data = self.fetch_user_agent(user_agent)
-      if data[:status] == :success
-        self.augment(event, @user_agent_destination, data)
+      response = self.fetch_user_agent(user_agent)
+      if response[:status] == :success
+        self.augment(event, @user_agent_destination, response[:data])
       end
     end
     filter_matched(event)
