@@ -49,17 +49,13 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
     end
   end
 
-  def handle_response(response)
-    data = JSON.parse(response.body)
-    if response.code == 200
-      {:status => :success,
-       :data   => data}
-    else
-      @logger.error("Access Watch (#{data["code"]}): #{data["message"]}")
-      {:status  => :error,
-       :code    => data["code"],
-       :message => data["message"]}
+  def submit(&block)
+    http_response = block.call
+    data = JSON.parse(http_response.body)
+    if http_response.code != 200
+      raise "Access Watch (#{data["code"]}): #{data["message"]}"
     end
+    data
   end
 
   def url(path)
@@ -67,21 +63,23 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
   end
 
   def get_json(path)
-    response = self.client.get(self.url(path),
-                               headers: {"Api-Key"    => @api_key,
-                                         "Accept"     => "application/json",
-                                         "User-Agent" => "Access Watch Logstash Plugin/0.2.0"})
-    self.handle_response(response)
+    self.submit {
+      self.client.get(self.url(path),
+                      headers: {"Api-Key"    => @api_key,
+                                "Accept"     => "application/json",
+                                "User-Agent" => "Access Watch Logstash Plugin/0.2.0"})
+    }
   end
 
   def post_json(path, data)
-    response = self.client.post(self.url(path),
-                                headers: {"Api-Key"      => @api_key,
-                                          "Accept"       => "application/json",
-                                          "Content-Type" => "application/json",
-                                          "User-Agent"   => "Access Watch Logstash Plugin/0.2.0"},
-                                body: JSON.generate(data))
-    self.handle_response(response)
+    self.submit {
+      self.client.post(self.url(path),
+                       headers: {"Api-Key"      => @api_key,
+                                 "Accept"       => "application/json",
+                                 "Content-Type" => "application/json",
+                                 "User-Agent"   => "Access Watch Logstash Plugin/0.2.0"},
+                       body: JSON.generate(data))
+    }
   end
 
   def with_cache(id, &block)
@@ -123,26 +121,23 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
 
   public
   def filter(event)
-    ip = event.get(@ip_source)
-    user_agent = event.get(@user_agent_source)
-    if @ip_source and @user_agent_source
-      response = self.fetch_identity(ip, user_agent)
-      if response[:status] == :success
-        data = response[:data]
+    begin
+      ip = event.get(@ip_source)
+      user_agent = event.get(@user_agent_source)
+      if @ip_source and @user_agent_source
+        data = self.fetch_identity(ip, user_agent)
         self.augment(event, @address_destination, data["address"], @@address_keys)
         self.augment(event, @robot_destination, data["robot"], @@robot_keys)
         self.augment(event, @reputation_destination, data["reputation"])
+      elsif @ip_source
+        data = self.fetch_address(ip)
+        self.augment(event, @address_destination, data, @@address_keys)
+      else
+        data = self.fetch_user_agent(user_agent)
+        self.augment(event, @user_agent_destination, data)
       end
-    elsif @ip_source
-      response = self.fetch_address(ip)
-      if response[:status] == :success
-        self.augment(event, @address_destination, response[:data], @@address_keys)
-      end
-    else
-      response = self.fetch_user_agent(user_agent)
-      if response[:status] == :success
-        self.augment(event, @user_agent_destination, response[:data])
-      end
+    rescue => e
+      @logger.error("Error augmenting the data.", error: e)
     end
     filter_matched(event)
   end
