@@ -39,8 +39,12 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
   # The destination field for reputation data
   config :reputation_destination, :validate => :string
 
+  # The destination field for identity data
+  config :identity_destination, :validate => :string
+
   @@address_keys = ["value", "hostname", "country_code", "flags"]
   @@robot_keys = ["id", "name", "url"]
+  @@identity_keys = ["type"]
 
   public
   def register
@@ -129,6 +133,7 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
         self.augment(event, @address_destination, data["address"], @@address_keys)
         self.augment(event, @robot_destination, data["robot"], @@robot_keys)
         self.augment(event, @reputation_destination, data["reputation"])
+        self.augment(event, @identity_destination, data, @@identity_keys)
       elsif @ip_source
         data = self.fetch_address(ip)
         self.augment(event, @address_destination, data, @@address_keys)
