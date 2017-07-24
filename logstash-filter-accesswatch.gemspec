@@ -1,7 +1,7 @@
 # coding: utf-8
 Gem::Specification.new do |s|
   s.name          = 'logstash-filter-accesswatch'
-  s.version       = '0.2.3'
+  s.version       = '0.2.4'
   s.licenses      = ['Apache-2.0']
   s.summary       = 'The Logstash filter plugin for Access Watch (http://access.watch).'
   s.description   = 'The Access Watch filter adds information about robots visiting your website based on data from our robot database.'
@@ -11,7 +11,7 @@ Gem::Specification.new do |s|
   s.require_paths = ['lib']
 
   # Files
-  s.files = Dir['lib/**/*','spec/**/*','vendor/**/*','*.gemspec','*.md','Gemfile','LICENSE']
+  s.files = Dir['lib/**/*', 'cert.pem', '*.gemspec','*.md','Gemfile','LICENSE']
 
   # Special flag to let us know this is actually a logstash plugin
   s.metadata = { 'logstash_plugin' => 'true',
@@ -19,7 +19,7 @@ Gem::Specification.new do |s|
 
   # Gem dependencies
   s.add_runtime_dependency 'logstash-core-plugin-api',   '~> 2.0'
-  s.add_runtime_dependency 'logstash-mixin-http_client', '~> 5.2'
+  s.add_runtime_dependency 'manticore',                  '~> 0.6.1'
   s.add_runtime_dependency 'lru_redux',                  '~> 1.1'
 
   s.add_development_dependency 'logstash-devutils', '1.3.3'

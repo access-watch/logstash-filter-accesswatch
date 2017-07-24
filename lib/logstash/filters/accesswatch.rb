@@ -1,7 +1,7 @@
 # encoding: utf-8
 require "logstash/filters/base"
 require "logstash/namespace"
-require "logstash/plugin_mixins/http_client"
+require 'manticore'
 require "json"
 require "digest"
 require "lru_redux"
@@ -10,8 +10,6 @@ require "lru_redux"
 # your website based on data from our robots database.
 
 class LogStash::Filters::Accesswatch < LogStash::Filters::Base
-
-  include LogStash::PluginMixins::HttpClient
 
   config_name "accesswatch"
 
@@ -42,12 +40,16 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
   # The destination field for identity data
   config :identity_destination, :validate => :string
 
+  # Request timeout in seconds.
+  config :timeout, :validate => :number, :default => 1
+
   @@address_keys = ["value", "hostname", "country_code", "flags"]
   @@robot_keys = ["id", "name", "url"]
   @@identity_keys = ["type"]
 
   public
   def register
+    @client = Manticore::Client.new request_timeout: @timeout, ssl: {:ca_file => "cert.pem"}
     if @cache_size > 0
       @cache = LruRedux::ThreadSafeCache.new(@cache_size)
     end
@@ -63,26 +65,26 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
   end
 
   def url(path)
-    "http://api.access.watch#{path}"
+    "https://api.access.watch#{path}"
   end
 
   def get_json(path)
     self.submit {
-      self.client.get(self.url(path),
-                      headers: {"Api-Key"    => @api_key,
-                                "Accept"     => "application/json",
-                                "User-Agent" => "Access Watch Logstash Plugin/0.2.0"})
+      @client.get(self.url(path),
+                  headers: {"Api-Key"    => @api_key,
+                            "Accept"     => "application/json",
+                            "User-Agent" => "Access Watch Logstash Plugin/0.2.0"})
     }
   end
 
   def post_json(path, data)
     self.submit {
-      self.client.post(self.url(path),
-                       headers: {"Api-Key"      => @api_key,
-                                 "Accept"       => "application/json",
-                                 "Content-Type" => "application/json",
-                                 "User-Agent"   => "Access Watch Logstash Plugin/0.2.0"},
-                       body: JSON.generate(data))
+      @client.post(self.url(path),
+                   headers: {"Api-Key"      => @api_key,
+                             "Accept"       => "application/json",
+                             "Content-Type" => "application/json",
+                             "User-Agent"   => "Access Watch Logstash Plugin/0.2.0"},
+                   body: JSON.generate(data))
     }
   end
 
