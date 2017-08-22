@@ -1,7 +1,7 @@
 # coding: utf-8
 Gem::Specification.new do |s|
   s.name          = 'logstash-filter-accesswatch'
-  s.version       = '0.2.5'
+  s.version       = '1.0.0'
   s.licenses      = ['Apache-2.0']
   s.summary       = 'The Logstash filter plugin for Access Watch (http://access.watch).'
   s.description   = 'The Access Watch filter adds information about robots visiting your website based on data from our robot database.'
