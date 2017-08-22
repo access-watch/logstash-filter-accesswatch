@@ -49,7 +49,8 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
 
   public
   def register
-    @client = Manticore::Client.new request_timeout: @timeout, ssl: {:ca_file => "cert.pem"}
+    ca_file_path = File.expand_path '../../../cert.pem', File.dirname(__FILE__)
+    @client = Manticore::Client.new request_timeout: @timeout, ssl: {:ca_file => ca_file_path}
     if @cache_size > 0
       @cache = LruRedux::ThreadSafeCache.new(@cache_size)
     end
