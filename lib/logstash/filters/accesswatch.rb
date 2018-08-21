@@ -18,6 +18,9 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
 
   # The size of the local cache, 0 to deactivate
   config :cache_size, :validate => :number, :default => 10000
+  
+  # The time after which cached objects expire in seconds, 3 hours as default
+  config :cache_expiry_time, :validate => :number, :default => 10800
 
   # The field containing the IP address.
   config :ip_source, :validate => :string, :required => true
@@ -52,7 +55,7 @@ class LogStash::Filters::Accesswatch < LogStash::Filters::Base
     ca_file_path = File.expand_path '../../../cert.pem', File.dirname(__FILE__)
     @client = Manticore::Client.new request_timeout: @timeout, ssl: {:ca_file => ca_file_path}
     if @cache_size > 0
-      @cache = LruRedux::ThreadSafeCache.new(@cache_size)
+      @cache = LruRedux::TTL::ThreadSafeCache.new(@cache_size, @cache_expiry_time)
     end
   end
 
